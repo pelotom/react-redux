@@ -1,8 +1,8 @@
-import { ComponentClass, Component, StatelessComponent } from 'react';
+import { Component, StatelessComponent, ComponentClass, ComponentType } from 'react';
 import { Store, Dispatch, ActionCreator, Action } from 'redux';
 
 interface ComponentDecorator<TOriginalProps, TOwnProps> {
-  (component: StatelessComponent<TOriginalProps>|ComponentClass<TOriginalProps>): ComponentClass<TOwnProps>;
+  (component: ComponentType<TOriginalProps>): ComponentClass<TOwnProps>;
 }
 
 /**
@@ -13,11 +13,11 @@ interface ComponentDecorator<TOriginalProps, TOwnProps> {
  * - TStateProps: Result of MapStateToProps
  * - TDispatchProps: Result of MapDispatchToProps
  */
-export function connect<State, TOwnProps>(): ComponentDecorator<{ dispatch: Dispatch<State> } & TOwnProps, TOwnProps>;
+export function connect<State, TOwnProps>(): ComponentDecorator<{ dispatch: Dispatch } & TOwnProps, TOwnProps>;
 
 export function connect<State, TOwnProps, TStateProps>(
   mapStateToProps: FuncOrSelf<MapStateToProps<State, TOwnProps, TStateProps>>,
-): ComponentDecorator<TStateProps & { dispatch: Dispatch<State> } & TOwnProps, TOwnProps>;
+): ComponentDecorator<TStateProps & { dispatch: Dispatch } & TOwnProps, TOwnProps>;
 
 export function connect<State, TOwnProps, TStateProps, TDispatchProps>(
   mapStateToProps: FuncOrSelf<MapStateToProps<State, TOwnProps, TStateProps>> | null,
@@ -35,14 +35,14 @@ interface MapDispatchToPropsObject {
   [name: string]: ActionCreator<Action> | ThunkedActionCreator;
 }
 
-type ThunkedActionCreator = (...args: any[]) => (dispatch: Dispatch<any>) => void
+type ThunkedActionCreator = (...args: any[]) => (dispatch: Dispatch) => void
 
 interface MapStateToProps<State, TOwnProps, TStateProps> {
   (state: State, ownProps: TOwnProps): TStateProps;
 }
 
 interface MapDispatchToPropsFunction<State, TOwnProps, TDispatchProps> {
-  (dispatch: Dispatch<State>, ownProps: TOwnProps): TDispatchProps;
+  (dispatch: Dispatch, ownProps: TOwnProps): TDispatchProps;
 }
 
 interface MergeProps<TOwnProps, TStateProps, TDispatchProps, TMergeProps> {
