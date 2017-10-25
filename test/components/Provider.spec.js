@@ -1,23 +1,28 @@
 /*eslint-disable react/prop-types*/
 
 import expect from 'expect'
-import React, { PropTypes, Component } from 'react'
-import TestUtils from 'react-addons-test-utils'
+import React, { Component } from 'react'
+import PropTypes from 'prop-types'
+import TestUtils from 'react-dom/test-utils'
 import { createStore } from 'redux'
-import { Provider, connect } from '../../src/index'
+import { Provider, createProvider, connect } from '../../src/index'
 
 describe('React', () => {
   describe('Provider', () => {
-    class Child extends Component {
+      const createChild = (storeKey = 'store') => {
+        class Child extends Component {
+          render() {
+            return <div />
+          }
+        }
 
-      render() {
-        return <div />
-      }
-    }
+        Child.contextTypes = {
+          [storeKey]: PropTypes.object.isRequired
+        }
 
-    Child.contextTypes = {
-      store: PropTypes.object.isRequired
+        return Child
     }
+    const Child = createChild();
 
     it('should enforce a single child', () => {
       const store = createStore(() => ({}))
@@ -36,14 +41,14 @@ describe('React', () => {
         expect(() => TestUtils.renderIntoDocument(
           <Provider store={store}>
           </Provider>
-        )).toThrow(/exactly one child/)
+        )).toThrow(/a single React element child/)
 
         expect(() => TestUtils.renderIntoDocument(
           <Provider store={store}>
             <div />
             <div />
           </Provider>
-        )).toThrow(/exactly one child/)
+        )).toThrow(/a single React element child/)
       } finally {
         Provider.propTypes = propTypes
       }
@@ -63,6 +68,24 @@ describe('React', () => {
 
       const child = TestUtils.findRenderedComponentWithType(tree, Child)
       expect(child.context.store).toBe(store)
+    })
+
+    it('should add the store to the child context using a custom store key', () => {
+        const store = createStore(() => ({}))
+        const CustomProvider = createProvider('customStoreKey');
+        const CustomChild = createChild('customStoreKey');
+
+        const spy = expect.spyOn(console, 'error');
+        const tree = TestUtils.renderIntoDocument(
+          <CustomProvider store={store}>
+            <CustomChild />
+          </CustomProvider>
+        )
+        spy.destroy()
+        expect(spy.calls.length).toBe(0)
+
+        const child = TestUtils.findRenderedComponentWithType(tree, CustomChild)
+        expect(child.context.customStoreKey).toBe(store)
     })
 
     it('should warn once when receiving a new store in props', () => {
@@ -109,6 +132,29 @@ describe('React', () => {
       expect(child.context.store.getState()).toEqual(11)
       expect(spy.calls.length).toBe(0)
     })
+
+    it('should handle subscriptions correctly when there is nested Providers', () => {
+      const reducer = (state = 0, action) => (action.type === 'INC' ? state + 1 : state)
+
+      const innerStore = createStore(reducer)
+      const innerMapStateToProps = expect.createSpy().andCall(state => ({ count: state }))
+      @connect(innerMapStateToProps)
+      class Inner extends Component {
+        render() { return <div>{this.props.count}</div> }
+      }
+
+      const outerStore = createStore(reducer)
+      @connect(state => ({ count: state }))
+      class Outer extends Component {
+        render() { return <Provider store={innerStore}><Inner /></Provider> }
+      }
+
+      TestUtils.renderIntoDocument(<Provider store={outerStore}><Outer /></Provider>)
+      expect(innerMapStateToProps.calls.length).toBe(1)
+
+      innerStore.dispatch({ type: 'INC'})
+      expect(innerMapStateToProps.calls.length).toBe(2)
+    })
   })
 
   it('should pass state consistently to mapState', () => {
@@ -147,7 +193,7 @@ describe('React', () => {
     })
     class ChildContainer extends Component {
       render() {
-        return <div {...this.props} />
+        return <div />
       }
     }
 

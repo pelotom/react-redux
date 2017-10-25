@@ -1,9 +1,11 @@
 /*eslint-disable react/prop-types*/
 
 import expect from 'expect'
-import React, { createClass, Children, PropTypes, Component } from 'react'
+import React, { Children, Component } from 'react'
+import createClass from 'create-react-class'
+import PropTypes from 'prop-types'
 import ReactDOM from 'react-dom'
-import TestUtils from 'react-addons-test-utils'
+import TestUtils from 'react-dom/test-utils'
 import { createStore } from 'redux'
 import { connect } from '../../src/index'
 
@@ -11,7 +13,7 @@ describe('React', () => {
   describe('connect', () => {
     class Passthrough extends Component {
       render() {
-        return <div {...this.props} />
+        return <div />
       }
     }
 
@@ -23,6 +25,9 @@ describe('React', () => {
       render() {
         return Children.only(this.props.children)
       }
+    }
+    ProviderMock.childContextTypes = {
+      store: PropTypes.object.isRequired
     }
 
     class ContextBoundStore {
@@ -49,14 +54,23 @@ describe('React', () => {
       }
     }
 
-    ProviderMock.childContextTypes = {
-      store: PropTypes.object.isRequired
-    }
-
     function stringBuilder(prev = '', action) {
       return action.type === 'APPEND'
         ? prev + action.body
         : prev
+    }
+
+    function imitateHotReloading(TargetClass, SourceClass, container) {
+      // Crude imitation of hot reloading that does the job
+      Object.getOwnPropertyNames(SourceClass.prototype).filter(key =>
+        typeof SourceClass.prototype[key] === 'function'
+      ).forEach(key => {
+        if (key !== 'render' && key !== 'constructor') {
+          TargetClass.prototype[key] = SourceClass.prototype[key]
+        }
+      })
+
+      container.forceUpdate()
     }
 
     it('should receive the store in the context', () => {
@@ -1374,26 +1388,74 @@ describe('React', () => {
       expect(stub.props.foo).toEqual(undefined)
       expect(stub.props.scooby).toEqual('doo')
 
-      function imitateHotReloading(TargetClass, SourceClass) {
-        // Crude imitation of hot reloading that does the job
-        Object.getOwnPropertyNames(SourceClass.prototype).filter(key =>
-          typeof SourceClass.prototype[key] === 'function'
-        ).forEach(key => {
-          if (key !== 'render' && key !== 'constructor') {
-            TargetClass.prototype[key] = SourceClass.prototype[key]
-          }
-        })
-
-        container.forceUpdate()
-      }
-
-      imitateHotReloading(ContainerBefore, ContainerAfter)
+      imitateHotReloading(ContainerBefore, ContainerAfter, container)
       expect(stub.props.foo).toEqual('baz')
       expect(stub.props.scooby).toEqual('foo')
 
-      imitateHotReloading(ContainerBefore, ContainerNext)
+      imitateHotReloading(ContainerBefore, ContainerNext, container)
       expect(stub.props.foo).toEqual('bar')
       expect(stub.props.scooby).toEqual('boo')
+    })
+
+    it('should persist listeners through hot update', () => {
+      const ACTION_TYPE = "ACTION"
+      const store = createStore((state = {actions: 0}, action) => {
+        switch (action.type) {
+          case ACTION_TYPE: {
+            return {
+              actions: state.actions + 1
+            }
+          }
+          default:
+            return state
+        }
+      })
+
+      @connect(
+        (state) => ({ actions: state.actions })
+      )
+      class Child extends Component {
+        render() {
+          return <Passthrough {...this.props}/>
+        }
+      }
+
+      @connect(
+        () => ({ scooby: 'doo' })
+      )
+      class ParentBefore extends Component {
+        render() {
+          return (
+            <Child />
+          )
+        }
+      }
+
+      @connect(
+        () => ({ scooby: 'boo' })
+      )
+      class ParentAfter extends Component {
+        render() {
+          return (
+            <Child />
+          )
+        }
+      }
+
+      let container
+      TestUtils.renderIntoDocument(
+        <ProviderMock store={store}>
+          <ParentBefore ref={instance => container = instance}/>
+        </ProviderMock>
+      )
+
+      const stub = TestUtils.findRenderedComponentWithType(container, Passthrough)
+
+      imitateHotReloading(ParentBefore, ParentAfter, container)
+
+      store.dispatch({type: ACTION_TYPE})
+
+      expect(stub.props.actions).toEqual(1)
     })
 
     it('should set the displayName correctly', () => {
@@ -1568,7 +1630,7 @@ describe('React', () => {
       }
 
       ImpureComponent.contextTypes = {
-        statefulValue: React.PropTypes.number
+        statefulValue: PropTypes.number
       }
 
       const decorator = connect(state => state, null, null, { pure: false })
@@ -1592,7 +1654,7 @@ describe('React', () => {
       }
 
       StatefulWrapper.childContextTypes = {
-        statefulValue: React.PropTypes.number
+        statefulValue: PropTypes.number
       }
 
       const tree = TestUtils.renderIntoDocument(
@@ -1882,6 +1944,43 @@ describe('React', () => {
       expect(memoizedReturnCount).toBe(2)
     })
 
+    it('should allow a mapStateToProps factory consuming just state to return a function that gets ownProps', () => {
+      const store = createStore(() => ({ value: 1 }))
+
+      let initialState
+      let initialOwnProps
+      let secondaryOwnProps
+      const mapStateFactory = function (factoryInitialState) {
+        initialState = factoryInitialState
+        initialOwnProps = arguments[1];
+        return (state, props) => {
+          secondaryOwnProps = props
+          return { }
+        }
+      }
+
+      @connect(mapStateFactory)
+      class Container extends Component {
+        render() {
+          return <Passthrough {...this.props} />
+        }
+      }
+
+      TestUtils.renderIntoDocument(
+        <ProviderMock store={store}>
+          <div>
+            <Container name="a" />
+          </div>
+        </ProviderMock>
+      )
+
+      store.dispatch({ type: 'test' })
+      expect(initialOwnProps).toBe(undefined)
+      expect(initialState).toNotBe(undefined)
+      expect(secondaryOwnProps).toNotBe(undefined)
+      expect(secondaryOwnProps.name).toBe("a")
+    })
+
     it('should allow providing a factory function to mapDispatchToProps', () => {
       let updatedCount = 0
       let memoizedReturnCount = 0
@@ -1908,7 +2007,7 @@ describe('React', () => {
           updatedCount++
         }
         render() {
-          return <div {...this.props} />
+          return <div />
         }
       }
 
@@ -2083,6 +2182,135 @@ describe('React', () => {
       store.dispatch({ type: 'ACTION' })
       expect(renderCount).toBe(rendersBeforeStateChange + 1)
     })
-  })
 
+    function renderWithBadConnect(Component) {
+      const store = createStore(() => ({}))
+
+      try {
+        TestUtils.renderIntoDocument(
+          <ProviderMock store={store}>
+            <Component pass="through" />
+          </ProviderMock>
+        )
+        return null
+      } catch (error) {
+        return error.message
+      }
+    }
+    it('should throw a helpful error for invalid mapStateToProps arguments', () => {
+      @connect('invalid')
+      class InvalidMapState extends React.Component { render() { return <div></div> } }
+
+      const error = renderWithBadConnect(InvalidMapState)
+      expect(error).toInclude('string')
+      expect(error).toInclude('mapStateToProps')
+      expect(error).toInclude('InvalidMapState')
+    })
+    it('should throw a helpful error for invalid mapDispatchToProps arguments', () => {
+      @connect(null, 'invalid')
+      class InvalidMapDispatch extends React.Component { render() { return <div></div> } }
+
+      const error = renderWithBadConnect(InvalidMapDispatch)
+      expect(error).toInclude('string')
+      expect(error).toInclude('mapDispatchToProps')
+      expect(error).toInclude('InvalidMapDispatch')
+    })
+    it('should throw a helpful error for invalid mergeProps arguments', () => {
+      @connect(null, null, 'invalid')
+      class InvalidMerge extends React.Component { render() { return <div></div> } }
+
+      const error = renderWithBadConnect(InvalidMerge)
+      expect(error).toInclude('string')
+      expect(error).toInclude('mergeProps')
+      expect(error).toInclude('InvalidMerge')
+    })
+
+    it('should notify nested components through a blocking component', () => {
+      @connect(state => ({ count: state }))
+      class Parent extends Component {
+        render() { return <BlockUpdates><Child /></BlockUpdates> }
+      }
+
+      class BlockUpdates extends Component {
+        shouldComponentUpdate() { return false; }
+        render() { return this.props.children; }
+      }
+
+      const mapStateToProps = expect.createSpy().andCall(state => ({ count: state }))
+      @connect(mapStateToProps)
+      class Child extends Component {
+        render() { return <div>{this.props.count}</div> }
+      }
+
+      const store = createStore((state = 0, action) => (action.type === 'INC' ? state + 1 : state))
+      TestUtils.renderIntoDocument(<ProviderMock store={store}><Parent /></ProviderMock>)
+
+      expect(mapStateToProps.calls.length).toBe(1)
+      store.dispatch({ type: 'INC' })
+      expect(mapStateToProps.calls.length).toBe(2)
+    })
+
+    it('should subscribe properly when a middle connected component does not subscribe', () => {
+
+      @connect(state => ({ count: state }))
+      class A extends React.Component { render() { return <B {...this.props} /> }}
+
+      @connect() // no mapStateToProps. therefore it should be transparent for subscriptions
+      class B extends React.Component { render() { return <C {...this.props} /> }}
+
+      @connect((state, props) => {
+        expect(props.count).toBe(state)
+        return { count: state * 10 + props.count }
+      })
+      class C extends React.Component { render() { return <div>{this.props.count}</div> }}
+
+      const store = createStore((state = 0, action) => (action.type === 'INC' ? state += 1 : state))
+      TestUtils.renderIntoDocument(<ProviderMock store={store}><A /></ProviderMock>)
+
+      store.dispatch({ type: 'INC' })
+    })
+
+    it('should subscribe properly when a new store is provided via props', () => {
+      const store1 = createStore((state = 0, action) => (action.type === 'INC' ? state + 1 : state))
+      const store2 = createStore((state = 0, action) => (action.type === 'INC' ? state + 1 : state))
+
+      @connect(state => ({ count: state }))
+      class A extends Component {
+        render() { return <B store={store2} /> }
+      }
+
+      const mapStateToPropsB = expect.createSpy().andCall(state => ({ count: state }))
+      @connect(mapStateToPropsB)
+      class B extends Component {
+        render() { return <C {...this.props} /> }
+      }
+
+      const mapStateToPropsC = expect.createSpy().andCall(state => ({ count: state }))
+      @connect(mapStateToPropsC)
+      class C extends Component {
+        render() { return <D /> }
+      }
+
+      const mapStateToPropsD = expect.createSpy().andCall(state => ({ count: state }))
+      @connect(mapStateToPropsD)
+      class D extends Component {
+        render() { return <div>{this.props.count}</div> }
+      }
+
+      TestUtils.renderIntoDocument(<ProviderMock store={store1}><A /></ProviderMock>)
+      expect(mapStateToPropsB.calls.length).toBe(1)
+      expect(mapStateToPropsC.calls.length).toBe(1)
+      expect(mapStateToPropsD.calls.length).toBe(1)
+
+      store1.dispatch({ type: 'INC' })
+      expect(mapStateToPropsB.calls.length).toBe(1)
+      expect(mapStateToPropsC.calls.length).toBe(1)
+      expect(mapStateToPropsD.calls.length).toBe(2)
+
+      store2.dispatch({ type: 'INC' })
+      expect(mapStateToPropsB.calls.length).toBe(2)
+      expect(mapStateToPropsC.calls.length).toBe(2)
+      expect(mapStateToPropsD.calls.length).toBe(2)
+    })
+  })
 })
